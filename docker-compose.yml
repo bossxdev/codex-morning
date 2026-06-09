@@ -1,11 +1,10 @@
 services:
-  claude-morning:
+  codex-morning:
     build: .
     volumes:
-      - ./data:/root/.claude
       - .:/workspace
     command: daemon
     environment:
-      - CLAUDE_MORNING_CRON_SCHEDULE=0 8 * * *
+      - CLAUDE_MORNING_CRON_SCHEDULE=0 0 * * *,0 5 * * *,0 10 * * *,0 15 * * *,0 20 * * *
       - TZ=Asia/Bangkok
     restart: unless-stopped
