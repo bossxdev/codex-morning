@@ -2,6 +2,7 @@ services:
   codex-morning:
     build: .
     volumes:
+      - ./data:/root/.codex
       - .:/workspace
     command: daemon
     environment:

@@ -1,5 +1,5 @@
 #!/bin/sh
-OUTPUT=$(codex -q "say ok" --model codex-mini-latest --approval-mode full-auto --json 2>/dev/null)
+OUTPUT=$(codex exec "say ok" --json 2>/dev/null)
 STATUS=$?
 TIMESTAMP=$(date +"%Y-%m-%dT%H:%M:%S%z")
 
