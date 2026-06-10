@@ -12,5 +12,5 @@ else
 fi
 
 if [ "$1" = "--debug" ]; then
-  echo "$OUTPUT" | jq . || echo "$OUTPUT"
+  echo "$OUTPUT" | grep '^{' | jq .
 fi
