@@ -1,109 +1,97 @@
-# claude-morning
+# codex-morning
 
-A lightweight Docker container that runs Claude Code on a daily schedule to keep your Claude subscription session active.
+Runs one scheduled OpenAI Codex CLI request every five hours in a native ARM64 Docker container.
 
-## How it works
+## Runtime contract
 
-- Runs as a persistent container (24/7) via Docker Compose
-- A cron job fires `claude -p "ping"` at 8AM daily using Haiku (minimal cost)
-- Auth state is persisted in `./data/` so you only log in once
-- Logs timestamp and cost to stdout on each run
+The only automated model is `gpt-5.6-luna`. Each run makes one `codex exec` request through Codex's built-in `openai` provider. No Fusion endpoint, custom base URL, API key, fallback model, alternate credential source, or automatic retry is configured.
 
-## Usage
+Codex runs with `--ignore-user-config`, `--ephemeral`, `--json`, and `--skip-git-repo-check`. The login preflight receives `TERM` after 30 seconds, and request execution receives `TERM` after five minutes; either is forcibly killed after a further five seconds if it does not stop. The wrapper accepts only a complete JSONL lifecycle with numeric token usage and writes a secret-free terminal record.
 
-### Option A: Pull from GHCR (recommended)
+The image pins `@openai/codex@0.153.4`. OpenAI documents `gpt-5.6-luna` as the exact model ID and lists it for eligible ChatGPT-authenticated Codex plans. See the [model documentation](https://developers.openai.com/api/docs/models/gpt-5.6-luna) and [ChatGPT availability documentation](https://help.openai.com/en/articles/20001354-gpt-56-in-chatgpt/).
 
-Create a `docker-compose.yml`:
+## Schedule
 
-```yaml
-services:
-  claude-morning:
-    image: ghcr.io/narze/claude-morning:latest
-    volumes:
-      - claude-data:/root/.claude
-    command: daemon
-    environment:
-      - CLAUDE_MORNING_CRON_SCHEDULE=0 8 * * *
-      - TZ=Asia/Bangkok
-    restart: unless-stopped
+Compose configures:
 
-volumes:
-  claude-data:
+```text
+CODEX_MORNING_CRON_SCHEDULE=0 */5 * * *
+TZ=Asia/Bangkok
 ```
 
-Then:
+Runs occur at `00:00`, `05:00`, `10:00`, `15:00`, and `20:00` Bangkok time. Cron setup validates one five-field expression before atomically replacing root's crontab. Invalid input leaves the prior crontab unchanged and prevents daemon startup. Legacy `CLAUDE_MORNING_CRON_SCHEDULE` and `CLAUDE_MORNING_CRON_SCHEDULES` variables are rejected instead of silently changing cadence.
 
-```bash
-docker compose up -d
-docker compose exec -it claude-morning claude
-# log in from within the TUI
-```
+## Build and authenticate
 
-### Option B: Build from source
-
-```bash
-git clone https://github.com/narze/claude-morning
-cd claude-morning
+```sh
 docker compose build
+docker compose run --rm --no-deps codex-morning login --device-auth
+docker compose run --rm --no-deps codex-morning login status
+```
+
+Complete device authentication in the browser when prompted. Authentication is stored only in the project-scoped `codex-auth` Docker volume mounted at `/root/.codex`. Do not add `-T` to device login, because it disables terminal allocation.
+
+Start production only after login succeeds:
+
+```sh
 docker compose up -d
-docker compose exec -it claude-morning claude
-# log in from within the TUI
+docker compose ps
+docker compose logs -f codex-morning
 ```
 
-## Configuration
+`tty: true` is intentional. Detached Codex execution can otherwise exit with empty output; OpenAI tracks this behavior in [openai/codex#19945](https://github.com/openai/codex/issues/19945).
 
-| Environment variable         | Default           | Description                     |
-|------------------------------|-------------------|---------------------------------|
-| `CLAUDE_MORNING_CRON_SCHEDULE`| `0 8 * * *`       | Cron schedule (comma-separated for multiple, e.g. `0 8 * * *,0 20 * * *`) |
-| `TZ`                    | (none/UTC)        | Timezone (e.g. `Asia/Bangkok`)   |
+## Authentication lifecycle
 
-## Examples
+The named volume supports Codex's atomic OAuth refresh-token replacement. Reauthenticate in the same volume with:
 
-### Run at 6 AM in Tokyo timezone
-
-```yaml
-environment:
-  - CLAUDE_MORNING_CRON_SCHEDULE=0 6 * * *
-  - TZ=Asia/Tokyo
+```sh
+docker compose run --rm --no-deps codex-morning login --device-auth
 ```
 
-## Useful commands
+Treat the volume as live credential state. `docker compose down` preserves it. `docker compose down -v` destroys it and requires fresh device authentication. Avoid copying or inspecting its contents; reauthentication is safer than maintaining a credential archive.
 
-```bash
-# Check cron is configured correctly
-docker compose exec claude-morning cat /etc/crontabs/root
+## Verification
 
-# Tail the ping log
-docker compose exec claude-morning tail -f /var/log/claude-ping.log
+Run the no-spend regression suite, which replaces Codex with a fake binary:
 
-# Run ping manually
-docker compose exec claude-morning /scripts/ping.sh
-
-# Run ping with full JSON output
-docker compose exec claude-morning /scripts/ping.sh --debug
-
-# Re-authenticate
-docker compose exec -it claude-morning claude
+```sh
+tests/test.sh all
 ```
 
-## Development
+Available focused modes are `ping`, `cron`, and `cron-e2e`. Tests verify exact model selection, first-party provider selection, no endpoint override, one request without fallback, real status propagation, secret suppression, strict JSONL handling, cron validation, fail-closed startup, terminal allocation, and daemon behavior.
 
-```bash
-git clone https://github.com/narze/claude-morning
-cd claude-morning
-docker compose build
-docker compose up -d
+Inspect runtime state without reading credentials:
 
-# Test the ping script
-docker compose exec claude-morning /scripts/ping.sh --debug
+```sh
+docker compose ps
+docker compose exec codex-morning codex --version
+docker compose exec codex-morning sh -c 'tr "\000" " " < /proc/1/cmdline; echo'
+docker compose exec codex-morning cat /etc/crontabs/root
+docker compose logs --tail 50 codex-morning
 ```
 
-## Files
+A successful record has `category=OK`, `status=0`, `requested_model=gpt-5.6-luna`, and numeric input, cached-input, and output token counts. Codex JSONL does not report an independently verifiable served-model identity, so proof is limited to the exact request argument, built-in provider, successful OAuth completion, and server acceptance.
 
-```
-Dockerfile            — node:24-alpine + jq + claude-code
-entrypoint.sh         — daemon mode runs crond; otherwise passes args to claude
-scripts/ping.sh       — runs claude -p "ping" and logs timestamp + cost
-scripts/setup-cron.sh — writes crontab from $CLAUDE_MORNING_CRON_SCHEDULE
-data/                 — persisted Claude auth state (gitignored)
-```
+## Audit categories
+
+| Category | Scope |
+| --- | --- |
+| E001 | Repository initialization |
+| E002 | Cron configuration |
+| E003 | Cron daemon startup |
+| E004 | Docker build |
+| E005 | Container startup |
+| E006 | Codex execution or response-contract failure |
+| E007 | Authentication or session failure |
+| E008 | Model configuration or availability failure |
+| E009 | Required runtime environment or log-write failure |
+| E010 | Persistent state |
+| E011 | Scheduled execution |
+| E012 | CI/CD validation |
+
+These labels classify failures; they do not replace real Git, shell, Codex, Docker, or Compose exit statuses.
+
+## Repository safety
+
+`data/` is excluded from Git and Docker build context. `.git/` is also excluded from image builds. The service mounts no workspace, exposes no ports, and does not bind host or proxy authentication paths.

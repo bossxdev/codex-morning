@@ -2,10 +2,13 @@ services:
   codex-morning:
     build: .
     volumes:
-      - ./data:/root/.codex
-      - .:/workspace
+      - codex-auth:/root/.codex
     command: daemon
+    tty: true
     environment:
-      - CLAUDE_MORNING_CRON_SCHEDULE=0 0 * * *,0 5 * * *,0 10 * * *,0 15 * * *,0 20 * * *
-      - TZ=Asia/Bangkok
+      CODEX_MORNING_CRON_SCHEDULE: "0 */5 * * *"
+      TZ: Asia/Bangkok
     restart: unless-stopped
+
+volumes:
+  codex-auth:
